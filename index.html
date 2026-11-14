@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>赶得上 · 公交通勤出门提醒</title>
+<meta name="description" content="按你所在的位置，算出每天几点该出门赶公交。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230F5C4E'/%3E%3Crect x='6.5' y='9' width='19' height='12' rx='2.6' fill='%23fff'/%3E%3Crect x='9' y='11.5' width='14' height='4.6' rx='1.2' fill='%230F5C4E'/%3E%3Ccircle cx='11.2' cy='23' r='2.1' fill='%23fff'/%3E%3Ccircle cx='20.8' cy='23' r='2.1' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+<link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=IBM+Plex+Mono:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fastly.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-status="idle">
+
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0F5C4E"/>
+      <rect x="6.5" y="9" width="19" height="12" rx="2.6" fill="#fff"/>
+      <rect x="9" y="11.5" width="14" height="4.6" rx="1.2" fill="#0F5C4E"/>
+      <circle cx="11.2" cy="23" r="2.1" fill="#fff"/>
+      <circle cx="20.8" cy="23" r="2.1" fill="#fff"/>
+    </svg>
+    <div class="bt">
+      <h1>赶得上</h1>
+      <span class="sub">按你所在的位置，算出几点该出门</span>
+    </div>
+  </div>
+  <div class="top-right">
+    <select class="plan" id="planSelect" aria-label="选择通勤方案"></select>
+    <button class="btn ghost sm" id="btnNewPlan" type="button">新建方案</button>
+    <span class="chip" id="statusChip" aria-live="polite"><i class="led"></i><span id="chipText">未开始监控</span></span>
+  </div>
+</header>
+
+<main class="workspace">
+  <section class="map-wrap" id="mapWrap">
+    <div id="map"></div>
+    <div class="pick-hint" id="pickHint">在地图上点一下，标出你的位置</div>
+    <div class="map-badge">
+      <span><i style="background:#2B6CD4"></i>我的位置</span>
+      <span><i style="background:#0F5C4E"></i>上车站</span>
+      <span><i style="background:#B6BDB4"></i>步行路线</span>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <section class="card setup" id="setupCard">
+      <h2>先花一分钟，设好你的通勤</h2>
+      <p class="lead">填完下面三项，它就会每天自动算好「几点该出门」。</p>
+      <ol class="steps">
+        <li id="step1">
+          <span class="num">1</span>
+          <span class="txt"><strong>公交线路</strong><em id="s1state">还没填，例如 959路</em></span>
+          <button class="btn ghost sm" type="button" data-goto="fLine">填写</button>
+        </li>
+        <li id="step2">
+          <span class="num">2</span>
+          <span class="txt"><strong>上车站的位置</strong><em id="s2state">在地图上点选你的上车站</em></span>
+          <button class="btn ghost sm" type="button" id="btnPickFromStep">点选</button>
+        </li>
+        <li id="step3">
+          <span class="num">3</span>
+          <span class="txt"><strong>这班车到站的时刻</strong><em id="s3state">例如 07:02、07:18、07:34</em></span>
+          <button class="btn ghost sm" type="button" data-goto="fTimes">填写</button>
+        </li>
+      </ol>
+    </section>
+
+    <section class="board" id="heroCard" hidden>
+      <div class="board-plate">
+        <span class="plate-no" id="heroLine">线路</span>
+        <span class="plate-stop" id="heroDesc">到站信息</span>
+      </div>
+      <div class="board-main">
+        <span class="state-tag" id="stateTag"><i></i><span id="stateText">时间充裕</span></span>
+        <div class="count" id="countMain" aria-live="off">--:--</div>
+        <div class="count-label" id="countLabel">距离必须出门</div>
+
+        <div class="timeline">
+          <div class="tl-track">
+            <span class="tl-seg wait" id="segWait"></span>
+            <span class="tl-seg walk" id="segWalk"></span>
+            <span class="tl-seg buf" id="segBuf"></span>
+            <span class="tl-knob" id="tlKnob"></span>
+          </div>
+          <div class="tl-cap"><span>现在</span><span><b id="tlArrive">--:--</b> 到站</span></div>
+          <div class="tl-legend">
+            <span><i style="background:#B6BDB4"></i><span id="lgWait">等待 0 分</span></span>
+            <span><i style="background:#0F5C4E"></i><span id="lgWalk">步行 0 分</span></span>
+            <span><i style="background:#CED4CC"></i><span id="lgBuf">缓冲 0 分</span></span>
+          </div>
+        </div>
+
+        <div class="board-stats" id="statsRow">
+          <div class="bs">
+            <span class="k">到站</span>
+            <span class="v" id="stArrive">--:--</span>
+            <span class="s" id="stArriveSub">按时刻表推算</span>
+          </div>
+          <div class="bs">
+            <span class="k">步行</span>
+            <span class="v" id="stWalk">--<small>分</small></span>
+            <span class="s" id="stWalkSub">还没定位</span>
+          </div>
+          <div class="bs">
+            <span class="k">最晚出门</span>
+            <span class="v" id="stLeave">--:--</span>
+            <span class="s" id="stLeaveSub">含预留时间</span>
+          </div>
+        </div>
+
+        <div class="next">
+          <span class="next-k">后续班次</span>
+          <span id="nextList"></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="notice" id="notice"></div>
+
+    <div class="cta">
+      <button class="btn primary" id="btnStart" type="button">开始监控</button>
+      <button class="btn ghost" id="btnTest" type="button">试一下提醒</button>
+    </div>
+
+    <section class="settings" id="settingsBox">
+      <button class="settings-head" id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsBody">
+        <span>通勤设置</span>
+        <i class="caret" aria-hidden="true"></i>
+      </button>
+      <div class="settings-body" id="settingsBody">
+        <div class="collapse">
+          <div class="form">
+            <div class="field">
+              <label for="fName">方案名称</label>
+              <input type="text" id="fName" placeholder="例如 上学通勤" maxlength="24">
+            </div>
+
+            <div class="field">
+              <label for="fLine">公交线路</label>
+              <input type="text" id="fLine" placeholder="例如 959路" maxlength="24">
+            </div>
+
+            <div class="field">
+              <label for="fStopName">上车站名称</label>
+              <input type="text" id="fStopName" placeholder="例如 集美大道站" maxlength="32">
+              <div class="inline">
+                <button class="btn ghost sm" id="btnPickStop" type="button">在地图上点选位置</button>
+                <button class="btn ghost sm" id="btnUseMe" type="button">用我当前位置</button>
+              </div>
+              <div class="posline" id="stopPos">尚未设置上车位置</div>
+            </div>
+
+            <div class="field">
+              <label for="fMode">时刻表填写方式</label>
+              <select id="fMode">
+                <option value="list">逐个填写到站时刻（推荐）</option>
+                <option value="interval">按首班时间 + 发车间隔</option>
+              </select>
+            </div>
+
+            <div class="field" id="wrapTimes">
+              <label for="fTimes">这班车经过你这站的时刻</label>
+              <textarea id="fTimes" placeholder="07:02, 07:18, 07:34, 07:50&#10;用逗号、空格或换行分隔都行"></textarea>
+              <div class="posline">一天里会经过你这站的固定时刻，填得越全，提醒越准。</div>
+            </div>
+
+            <div id="wrapInterval" hidden>
+              <div class="row2">
+                <div class="field">
+                  <label for="fFirst">首班经过时刻</label>
+                  <input type="time" id="fFirst" value="07:00">
+                </div>
+                <div class="field">
+                  <label for="fInterval">发车间隔（分钟）</label>
+                  <input type="number" id="fInterval" value="15" min="1" max="120">
+                </div>
+              </div>
+              <div class="field" style="margin-top:13px">
+                <label for="fUntil">末班经过时刻</label>
+                <input type="time" id="fUntil" value="09:00">
+              </div>
+            </div>
+
+            <div class="row2">
+              <div class="field">
+                <label for="fSpeed">步行速度</label>
+                <select id="fSpeed">
+                  <option value="1">慢走（约 3.6 公里/小时）</option>
+                  <option value="1.25">正常（约 4.5 公里/小时）</option>
+                  <option value="1.5">快走（约 5.4 公里/小时）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="fBuffer">到站后预留（分钟）</label>
+                <input type="number" id="fBuffer" value="2" min="0" max="30">
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="fAdvance">提前提醒（分钟）</label>
+              <input type="number" id="fAdvance" value="5" min="0" max="60">
+              <div class="posline">在必须出门前这么多分钟，先轻轻提醒你一次。</div>
+            </div>
+
+            <div class="field">
+              <label>哪几天提醒</label>
+              <div class="days">
+                <label class="day"><input type="checkbox" class="daybox" value="0"><span>日</span></label>
+                <label class="day"><input type="checkbox" class="daybox" value="1"><span>一</span></label>
+                <label class="day"><input type="checkbox" class="daybox" value="2"><span>二</span></label>
+                <label class="day"><input type="checkbox" class="daybox" value="3"><span>三</span></label>
+                <label class="day"><input type="checkbox" class="daybox" value="4"><span>四</span></label>
+                <label class="day"><input type="checkbox" class="daybox" value="5"><span>五</span></label>
+                <label class="day"><input type="checkbox" class="daybox" value="6"><span>六</span></label>
+              </div>
+            </div>
+
+            <div class="switches">
+              <label class="switch">
+                <span>到点响铃提醒</span>
+                <input type="checkbox" id="fSound"><span class="track"></span>
+              </label>
+              <label class="switch">
+                <span>手机 / 电脑通知弹窗</span>
+                <input type="checkbox" id="fNotify"><span class="track"></span>
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="fMap">地图源</label>
+              <select id="fMap">
+                <option value="amap">高德地图（国内加载快）</option>
+                <option value="osm">OpenStreetMap（备用）</option>
+              </select>
+            </div>
+
+            <div class="form-actions">
+              <button class="btn primary" id="btnSave" type="button">保存设置</button>
+              <button class="btn del" id="btnDelete" type="button">删除方案</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card source">
+      <span class="ttl">数据说明</span>
+      <b>到站时间</b>按你填写的时刻表推算，不是公交车的实时定位。<br>
+      <b>步行时间</b>优先使用 OpenStreetMap 的步行路线规划，取不到时按直线距离 × 1.3 估算，会与实际有出入。<br>
+      <b>减弱动效</b>：系统开启「减少动态效果」后，页面动画会自动关闭。
+    </section>
+  </aside>
+</main>
+
+<div class="alert" id="alertBox" role="alertdialog" aria-modal="true" aria-labelledby="alertTitle">
+  <div>
+    <div class="ring">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="2"/><path d="M12 7v5.2l3.4 2" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+    </div>
+    <h2 id="alertTitle">现在出发</h2>
+    <p class="atime" id="alertTime"></p>
+    <p class="detail" id="alertDetail"></p>
+    <div class="acts">
+      <button class="btn light" id="btnAlertOk" type="button">我知道了</button>
+      <button class="btn line" id="btnAlertStop" type="button">停止监控</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" aria-live="polite"></div>
+<div class="grain" aria-hidden="true"></div>
+<noscript><p style="padding:20px">这个页面需要开启 JavaScript 才能运行。</p></noscript>
+
+<script src="https://fastly.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
